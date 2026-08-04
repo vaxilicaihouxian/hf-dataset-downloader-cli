@@ -6,11 +6,15 @@
 
 ## Go（二进制）
 
-下载 release 中适合 Linux AMD64（Debian x86_64）的文件后：
+下载 release 中适合你平台的文件后：
+
+- `linux_amd64`：Debian / Ubuntu 等 x86_64 系统
+- `darwin_arm64`：macOS M1、M2、M3、M4 等 Apple Silicon 芯片
 
 ```bash
-chmod +x hf-dataset-download_linux_amd64
-./hf-dataset-download_linux_amd64 HuggingFaceH4/ultrachat_200k
+tar -xzf hf-dataset-downloader_v0.1.1_darwin_arm64.tar.gz
+chmod +x hf-dataset-download
+./hf-dataset-download HuggingFaceH4/ultrachat_200k
 ```
 
 从源码构建（仅 Go 标准库、无第三方依赖）：

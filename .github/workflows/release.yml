@@ -21,19 +21,23 @@ jobs:
         with:
           go-version: stable
 
-      - name: Build Linux AMD64 binary
+      - name: Build release binaries
         run: |
           mkdir -p dist/package
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/package/hf-dataset-download hf_dataset_download.go
-          tar -C dist/package -czf dist/hf-dataset-downloader_${GITHUB_REF_NAME}_linux_amd64.tar.gz hf-dataset-download
-          sha256sum dist/hf-dataset-downloader_${GITHUB_REF_NAME}_linux_amd64.tar.gz > dist/SHA256SUMS
+          build() {
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/package/hf-dataset-download hf_dataset_download.go
+            tar -C dist/package -czf "dist/hf-dataset-downloader_${GITHUB_REF_NAME}_$3.tar.gz" hf-dataset-download
+          }
+          build linux amd64 linux_amd64
+          build darwin arm64 darwin_arm64
+          sha256sum dist/*.tar.gz > dist/SHA256SUMS
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            dist/hf-dataset-downloader_${GITHUB_REF_NAME}_linux_amd64.tar.gz \
+            dist/*.tar.gz \
             dist/SHA256SUMS \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes
