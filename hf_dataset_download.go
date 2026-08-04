@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -159,7 +160,17 @@ func run(dataset, config, output string, timeout time.Duration) error {
 			"length":  {strconv.FormatInt(length, 10)},
 		}, &page)
 		if err != nil {
-			return err
+			if written != 0 {
+				return err
+			}
+			fmt.Printf("Dataset Viewer 不可用，尝试直接读取原始 JSONL……\n")
+			fallbackWritten, rawPath, fallbackErr := downloadRawJSONL(client, dataset, selected, target, writer)
+			if fallbackErr != nil {
+				return fmt.Errorf("Dataset Viewer 失败：%v；原始 JSONL 回退也失败：%w", err, fallbackErr)
+			}
+			written = fallbackWritten
+			fmt.Printf("已从原始文件 %s 写入 %d 条\n", rawPath, written)
+			break
 		}
 		if len(page.Rows) == 0 {
 			break
@@ -241,6 +252,94 @@ func getJSON(client *http.Client, path string, values url.Values, destination an
 		return fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return json.NewDecoder(resp.Body).Decode(destination)
+}
+
+// downloadRawJSONL is a fallback for datasets whose Dataset Viewer cannot build
+// a preview. It reads the source stream and closes the HTTP response as soon as
+// the requested number of JSONL records has been written.
+func downloadRawJSONL(client *http.Client, dataset string, selected splitInfo, target int64, writer *bufio.Writer) (int64, string, error) {
+	paths := []string{
+		"data/" + selected.Split + ".jsonl",
+		selected.Split + ".jsonl",
+		selected.Config + "/" + selected.Split + ".jsonl",
+	}
+
+	var lastError error
+	for _, path := range paths {
+		response, err := openRawFile(client, dataset, path)
+		if err != nil {
+			lastError = err
+			continue
+		}
+		defer response.Body.Close()
+
+		reader := bufio.NewReader(response.Body)
+		var written int64
+		for target < 0 || written < target {
+			line, readErr := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				line = bytesTrimLineEnding(line)
+				if len(line) > 0 {
+					if _, err := writer.Write(line); err != nil {
+						return written, path, err
+					}
+					if err := writer.WriteByte('\n'); err != nil {
+						return written, path, err
+					}
+					written++
+					if written == 1 || written%100 == 0 || (target >= 0 && written == target) {
+						fmt.Printf("下载进度：%d 条\n", written)
+					}
+				}
+			}
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				return written, path, readErr
+			}
+		}
+		return written, path, nil
+	}
+	if lastError == nil {
+		lastError = fmt.Errorf("未找到 JSONL 原始文件")
+	}
+	return 0, "", lastError
+}
+
+func openRawFile(client *http.Client, dataset, path string) (*http.Response, error) {
+	parts := strings.Split(dataset, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("无效的数据集 ID：%q", dataset)
+	}
+	urlPath := "https://huggingface.co/datasets/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1]) + "/resolve/main/"
+	for _, part := range strings.Split(path, "/") {
+		urlPath += url.PathEscape(part) + "/"
+	}
+	urlPath = strings.TrimSuffix(urlPath, "/")
+
+	req, err := http.NewRequest(http.MethodGet, urlPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "hf-dataset-sample-downloader/1.0")
+	if token := hfToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		response.Body.Close()
+		return nil, fmt.Errorf("%s：HTTP %s: %s", path, response.Status, strings.TrimSpace(string(body)))
+	}
+	return response, nil
+}
+
+func bytesTrimLineEnding(value []byte) []byte {
+	return bytes.TrimRight(value, "\r\n")
 }
 
 func hfToken() string {
