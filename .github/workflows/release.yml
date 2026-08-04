@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build Linux AMD64 binary
+        run: |
+          mkdir -p dist/package
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/package/hf-dataset-download hf_dataset_download.go
+          tar -C dist/package -czf dist/hf-dataset-downloader_${GITHUB_REF_NAME}_linux_amd64.tar.gz hf-dataset-download
+          sha256sum dist/hf-dataset-downloader_${GITHUB_REF_NAME}_linux_amd64.tar.gz > dist/SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/hf-dataset-downloader_${GITHUB_REF_NAME}_linux_amd64.tar.gz \
+            dist/SHA256SUMS \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
